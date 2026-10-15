@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .detect import Hardware
-from .runtime import runtime_package
+from .runtime import find_runtime, runtime_package
 from .tiers import Tier
 
 SYSCTL_PATH = "/etc/sysctl.d/90-ai2.conf"
@@ -305,9 +305,13 @@ def build_plan(hw: Hardware, tier: Tier, config: dict, backend, pkg_backend) -> 
     # such package at all. It runs last so that when it fails the system is
     # still tuned and the tier recorded, instead of left half-configured (which
     # is what sent `ai-2 doctor` to "init --apply has not been run" and the
-    # Knowledge search back to "ai-2 wizard" in a loop). Installing the wrong
-    # variant is worse than none (SIGILL), so this follows hw.cpu_variant.
-    if runtime.get("provider") == "llama.cpp":
+    # Knowledge search back to "ai-2 wizard" in a loop). It is skipped when a
+    # llama-bench already answers for this CPU — a hand-built /opt/ai2/llama on
+    # Debian, or the package on Artix — so re-running `init --apply` after the
+    # runtime is in place does not try (and fail) to apt-install a package that
+    # does not exist. Installing the wrong variant is worse than none (SIGILL),
+    # so the package follows hw.cpu_variant.
+    if runtime.get("provider") == "llama.cpp" and find_runtime(hw.cpu_variant) is None:
         pkg = runtime_package(hw.cpu_variant)
         if pkg and pkg_backend.is_installed(pkg) is False:
             actions.append(_cmd_action(

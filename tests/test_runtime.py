@@ -42,7 +42,9 @@ def test_loaded_backend_is_read_from_ggml_log():
     assert runtime.cpu_variant_loaded("") is None
 
 
-def test_plan_installs_runtime_for_cpu_variant_not_tier():
+def test_plan_installs_runtime_for_cpu_variant_not_tier(monkeypatch):
+    from ai2 import tuning
+    monkeypatch.setattr(tuning, "find_runtime", lambda variant: None)
     tiers = load_tiers()
     tier = tiers["light"]
     # A Light-tier machine (4 GB) with a pre-SSE4.1 CPU must get the baseline package.
@@ -52,16 +54,30 @@ def test_plan_installs_runtime_for_cpu_variant_not_tier():
     assert ["fake-install", "ai2-llama-cpp"] in cmds
 
 
-def test_engine_install_is_the_last_step():
+def test_engine_install_is_the_last_step(monkeypatch):
     """It is the step that can fail because the repo is missing it (or, on
     Debian, because no such package exists). It runs after the tier is recorded
     so that failure leaves a tuned machine, not a half-configured one."""
+    from ai2 import tuning
+    monkeypatch.setattr(tuning, "find_runtime", lambda variant: None)
     tiers = load_tiers()
     tier = tiers["light"]
     hw = Hardware(ram_nominal_gib=4, logical_cores=2, init_system="runit", flags=set())
     plan = build_plan(hw, tier, resolve_config(tier, tiers), FakeBackend(), FakePkgBackend())
     assert plan[-1].commands == [["fake-install", "ai2-llama-cpp"]]
     assert "record assigned tier" in plan[-2].description
+
+
+def test_plan_skips_the_engine_package_when_a_runtime_is_already_present(monkeypatch):
+    """A hand-built llama.cpp in /opt/ai2/llama (the Debian path) must stop the
+    plan from trying to apt-install a package Debian does not have."""
+    from ai2 import tuning
+    monkeypatch.setattr(tuning, "find_runtime", lambda variant: "/opt/ai2/llama")
+    tiers = load_tiers()
+    tier = tiers["light"]
+    hw = Hardware(ram_nominal_gib=4, logical_cores=2, init_system="runit", flags=set())
+    plan = build_plan(hw, tier, resolve_config(tier, tiers), FakeBackend(), FakePkgBackend())
+    assert not any("ai2-llama-cpp" in " ".join(c) for a in plan for c in a.commands)
 
 
 def test_engine_install_hint_follows_the_package_backend(monkeypatch):

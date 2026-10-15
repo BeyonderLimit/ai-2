@@ -91,7 +91,11 @@ def test_server_state_roundtrip(tmp_path, monkeypatch):
     assert serverstate.read_server() is None   # stale pid removed
 
 
-def test_runtime_defaults_follow_the_tier(tmp_path):
+def test_runtime_defaults_follow_the_tier(tmp_path, monkeypatch):
+    from ai2 import tiers as tiers_mod
+    # tier_id=None falls back to the machine's /etc/ai2/tier; pin it to "none"
+    # so the fallback branch is tested, not this developer's applied tier.
+    monkeypatch.setattr(tiers_mod, "installed_tier_id", lambda *a, **k: None)
     tiers = load_tiers()
     tiny = runtime_defaults("qwen3-0.6b", tiers, tier_id="tiny")
     assert tiny["idle_timeout_s"] == 300 and tiny["ctx"] == 1024
