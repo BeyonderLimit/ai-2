@@ -602,8 +602,12 @@ def cmd_chat(args) -> int:
     if not runner._server_ready(url):
         runtime_dir = runtime.find_runtime(hw.cpu_variant)
         model = runner._catalog_entry(args.model) if args.model else _usable_model(hw)
-        if runtime_dir is None or model is None or runtime.find_model_file(model["file"]) is None:
-            print("AI-2 is not set up on this computer yet. Run:  ai-2 wizard", file=sys.stderr)
+        if runtime_dir is None:
+            print(f"AI-2 has no AI engine yet: the llama.cpp build for '{hw.cpu_variant}' is not "
+                  f"installed.\n  {runtime.engine_install_hint()}", file=sys.stderr)
+            return 1
+        if model is None or runtime.find_model_file(model["file"]) is None:
+            print("No AI model is on this computer yet. Get one with  ai-2 model pull <id>", file=sys.stderr)
             return 1
         state_dir = serverstate.state_dir()
         os.makedirs(state_dir, exist_ok=True)

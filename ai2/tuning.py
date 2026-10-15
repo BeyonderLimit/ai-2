@@ -278,16 +278,6 @@ def build_plan(hw: Hardware, tier: Tier, config: dict, backend, pkg_backend) -> 
                 actions.append(action)
 
     runtime = config.get("runtime") or {}
-    if runtime.get("provider") == "llama.cpp":
-        # The CPU-variant runtime package from the signed [ai2] repo. Installing
-        # the wrong variant is worse than none (SIGILL), so this follows
-        # hw.cpu_variant, never the tier.
-        pkg = runtime_package(hw.cpu_variant)
-        if pkg and pkg_backend.is_installed(pkg) is False:
-            actions.append(_cmd_action(
-                pkg_backend.install_cmd([pkg]),
-                f"install llama.cpp runtime for this CPU: {pkg} ({pkg_backend.name})",
-            ))
     if runtime:
         content = "".join(f"{key} = {value}\n" for key, value in sorted(runtime.items()))
         actions.append(_write_file_action(
@@ -309,6 +299,21 @@ def build_plan(hw: Hardware, tier: Tier, config: dict, backend, pkg_backend) -> 
         os.path.join(STATE_DIR, "tier"), tier.id + "\n",
         f"record assigned tier '{tier.id}' in {STATE_DIR}/tier",
     ))
+
+    # The engine package is the one step that can fail for a reason that is not
+    # this machine's: the signed [ai2] repo is not configured, or Debian has no
+    # such package at all. It runs last so that when it fails the system is
+    # still tuned and the tier recorded, instead of left half-configured (which
+    # is what sent `ai-2 doctor` to "init --apply has not been run" and the
+    # Knowledge search back to "ai-2 wizard" in a loop). Installing the wrong
+    # variant is worse than none (SIGILL), so this follows hw.cpu_variant.
+    if runtime.get("provider") == "llama.cpp":
+        pkg = runtime_package(hw.cpu_variant)
+        if pkg and pkg_backend.is_installed(pkg) is False:
+            actions.append(_cmd_action(
+                pkg_backend.install_cmd([pkg]),
+                f"install llama.cpp runtime for this CPU: {pkg} ({pkg_backend.name})",
+            ))
     return actions
 
 

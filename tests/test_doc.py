@@ -544,6 +544,27 @@ def test_a_running_server_with_another_model_is_not_reused(monkeypatch, capsys):
     assert runner._ensure_server(None, model, 8081, serverstate.EMBED, wait=1) == "http://127.0.0.1:8081/"
 
 
+def test_missing_engine_and_missing_model_each_say_what_is_missing(monkeypatch, capsys):
+    """One "not set up, run ai-2 wizard" hid which half was missing and sent a
+    Debian user back to a wizard that fails at the same step. Say which half it
+    is, and for the engine say how to get it on this system."""
+    from types import SimpleNamespace
+    hw = SimpleNamespace(cpu_variant="avx2")
+    model = {"id": "nomic-embed-text-v1.5", "file": "e.gguf", "label": "Embed"}
+    monkeypatch.setattr(serverstate, "read_server", lambda name: None)
+    monkeypatch.setattr(runner, "_server_ready", lambda url, timeout=2.0: False)
+    monkeypatch.setattr(runtime, "find_runtime", lambda variant: None)
+    monkeypatch.setattr(runtime, "engine_install_hint", lambda: "INSTALL-HINT")
+    assert runner._ensure_server(hw, model, 8081, serverstate.EMBED, wait=1) is None
+    err = capsys.readouterr().err
+    assert "no AI engine" in err and "INSTALL-HINT" in err
+    # engine present but the model file is not on disk: same, for the model
+    monkeypatch.setattr(runtime, "find_runtime", lambda variant: "/fake/runtime")
+    monkeypatch.setattr(runtime, "find_model_file", lambda name: None)
+    assert runner._ensure_server(hw, model, 8081, serverstate.EMBED, wait=1) is None
+    assert "ai-2 model pull nomic-embed-text-v1.5" in capsys.readouterr().err
+
+
 def test_doc_search_with_a_question_on_a_terminal_keeps_asking(tmp_path, monkeypatch, capsys):
     """A question typed at a terminal is the first round of Search Knowledge,
     not a one-shot that cannot open the document."""

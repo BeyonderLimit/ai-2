@@ -515,9 +515,8 @@ def _doc_hits(args, docmod, hw, question: str, distinct: bool = False) -> list[d
         url = _ensure_embed(hw, emb, wait=args.wait)
         if url is None:
             last_error = "no embedding server"
-            print(f"Not searched this time: {', '.join(groups[model_id])} (the embedding server is busy "
-                  "or did not start; if a document is being indexed, ask again when it finishes)",
-                  file=sys.stderr)
+            print(f"Not searched this time: {', '.join(groups[model_id])} (the embedding server "
+                  "could not start; the reason is the message just above)", file=sys.stderr)
             continue
         qvec = docmod.EmbedClient(url, emb).embed_query(question)
         hits = docmod.search_collections({n: stores[n] for n in groups[model_id]},

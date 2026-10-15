@@ -41,6 +41,24 @@ def find_runtime(variant: str) -> str | None:
     return None
 
 
+def engine_install_hint() -> str:
+    """How to get the CPU-variant engine on this system, for the "no engine"
+    message. Artix and the ISO ship it as a package, so the wizard and
+    `ai-2 runtime install` can fetch it. Debian/Ubuntu have no such package, so
+    point at a llama.cpp build instead of at a command that is guaranteed to
+    fail there (the old message sent the user back to `ai-2 wizard` in a loop)."""
+    from .backends import get_package_backend
+    try:
+        backend = get_package_backend()
+    except ValueError:
+        backend = None
+    if backend is not None and backend.name == "pacman":
+        return "Install it with:  sudo ai-2 runtime install"
+    return ("No packaged engine exists for this system; build llama.cpp and point AI2_RUNTIME_DIR "
+            "at the directory holding llama-bench and llama-server (or put it in /opt/ai2/llama) "
+            "— see ai2/DEBIAN-README.md.")
+
+
 # Searched in order; computed at call time so HOME/env changes (doctor under
 # sudo looking at the invoking user) are honored.
 def user_model_dir() -> str:

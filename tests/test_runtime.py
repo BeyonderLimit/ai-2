@@ -52,6 +52,34 @@ def test_plan_installs_runtime_for_cpu_variant_not_tier():
     assert ["fake-install", "ai2-llama-cpp"] in cmds
 
 
+def test_engine_install_is_the_last_step():
+    """It is the step that can fail because the repo is missing it (or, on
+    Debian, because no such package exists). It runs after the tier is recorded
+    so that failure leaves a tuned machine, not a half-configured one."""
+    tiers = load_tiers()
+    tier = tiers["light"]
+    hw = Hardware(ram_nominal_gib=4, logical_cores=2, init_system="runit", flags=set())
+    plan = build_plan(hw, tier, resolve_config(tier, tiers), FakeBackend(), FakePkgBackend())
+    assert plan[-1].commands == [["fake-install", "ai2-llama-cpp"]]
+    assert "record assigned tier" in plan[-2].description
+
+
+def test_engine_install_hint_follows_the_package_backend(monkeypatch):
+    from ai2 import backends
+
+    class Pacman:
+        name = "pacman"
+
+    class Apt:
+        name = "apt"
+
+    monkeypatch.setattr(backends, "get_package_backend", lambda: Pacman())
+    assert "ai-2 runtime install" in runtime.engine_install_hint()
+    monkeypatch.setattr(backends, "get_package_backend", lambda: Apt())
+    hint = runtime.engine_install_hint()
+    assert "AI2_RUNTIME_DIR" in hint and "runtime install" not in hint
+
+
 def test_plan_skips_runtime_when_installed():
     class Installed(FakePkgBackend):
         def is_installed(self, pkg):

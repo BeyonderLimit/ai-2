@@ -110,8 +110,13 @@ def _ensure_server(hw, model: dict, port: int, record: str, wait: int = 180,
         print(f"error: a server is already running with {running['model']}, not {model['id']}. "
               f"Stop it first:  ai-2 stop", file=sys.stderr)
         return None
-    if runtime.find_runtime(hw.cpu_variant) is None or runtime.find_model_file(model["file"]) is None:
-        print("AI-2 is not set up on this computer yet. Run:  ai-2 wizard", file=sys.stderr)
+    if runtime.find_runtime(hw.cpu_variant) is None:
+        print(f"AI-2 has no AI engine yet: the llama.cpp build for '{hw.cpu_variant}' is not "
+              f"installed.\n  {runtime.engine_install_hint()}", file=sys.stderr)
+        return None
+    if runtime.find_model_file(model["file"]) is None:
+        print(f"The model this needs is not on this computer yet. Get it with:  ai-2 model pull {model['id']}",
+              file=sys.stderr)
         return None
     state_dir = serverstate.state_dir()
     os.makedirs(state_dir, exist_ok=True)

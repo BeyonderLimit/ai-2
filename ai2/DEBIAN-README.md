@@ -56,7 +56,9 @@ this path supports. The **inference engine is not packaged for Debian**: the
 exist here, so `sudo ai-2 runtime install` will tell you to build it yourself.
 Install llama.cpp (`llama-bench`, `llama-server`) and put it where AI-2 looks —
 `/opt/ai2/llama`, or set `AI2_RUNTIME_DIR` — or use `ai-2 remote` to point at a
-server running elsewhere.
+server running elsewhere. Knowledge Pack and document search use that same
+engine to embed text, so `ai-2 doc search` needs it as well; without an engine
+there is nothing to search with.
 
 ## First-Time Setup
 

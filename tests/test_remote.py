@@ -150,7 +150,7 @@ def test_chat_remote_default_and_local_override(server, home, capsys, monkeypatc
     monkeypatch.setattr(runner, "_server_ready", lambda url, timeout=2.0: False)
     monkeypatch.setattr(runtime, "find_runtime", lambda variant: None)
     assert cli.main(["chat", "--local", "--no-browser"]) == 1
-    assert "not set up" in capsys.readouterr().err
+    assert "no AI engine" in capsys.readouterr().err
     assert calls == [server]
 
 
