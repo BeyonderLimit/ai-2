@@ -184,16 +184,23 @@ def _xfconf(channel: str, prop: str, value: str, kind: str = "string") -> bool:
         return False
 
 
-def _pkg_missing() -> list[str]:
-    missing = []
-    for pkg in SPEECH_PACKAGES:
-        try:
-            if subprocess.run(["pacman", "-Q", pkg], stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, timeout=10).returncode != 0:
-                missing.append(pkg)
-        except (OSError, subprocess.TimeoutExpired):
-            missing.append(pkg)
-    return missing
+def _pkg_backend(pkg_backend=None):
+    """The package backend to query/install the reader stack with. None when no
+    package manager is known, so the caller can say so instead of guessing."""
+    if pkg_backend is not None:
+        return pkg_backend
+    from .backends import get_package_backend
+    try:
+        return get_package_backend()
+    except ValueError:
+        return None
+
+
+def _pkg_missing(pkg_backend=None) -> list[str]:
+    backend = _pkg_backend(pkg_backend)
+    if backend is None:
+        return list(SPEECH_PACKAGES)
+    return [pkg for pkg in SPEECH_PACKAGES if backend.is_installed(pkg) is not True]
 
 
 def status(say=print) -> int:
@@ -211,16 +218,22 @@ def status(say=print) -> int:
     return 0
 
 
-def setup(say=print, run=subprocess.run) -> int:
+def setup(say=print, run=subprocess.run, pkg_backend=None) -> int:
     """Install the reader stack and wire it for the current user. Interactive
     (sudo prompts for the package install); everything else is user-level."""
-    missing = _pkg_missing()
+    from .backends import get_package_backend
+    backend = _pkg_backend(pkg_backend)
+    missing = _pkg_missing(backend)
     if missing:
+        if backend is None:
+            say("No package manager found (pacman/apt); install " + " ".join(missing) +
+                " yourself and run this again.")
+            return 1
         say("Installing: " + " ".join(missing) + "  (sudo asks for your password)")
         try:
-            proc = run(["sudo", "pacman", "-S", "--needed"] + missing)
+            proc = run(["sudo"] + backend.install_cmd(missing))
         except OSError as exc:
-            say(f"Could not run pacman ({exc}).")
+            say(f"Could not run the package manager ({exc}).")
             return 1
         if proc.returncode != 0:
             say("Package install failed; nothing else was changed.")

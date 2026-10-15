@@ -20,19 +20,6 @@ SYSCTL_PATH = "/etc/sysctl.d/90-ai2.conf"
 STATE_DIR = "/etc/ai2"
 BOOT_TUNING = "/usr/lib/ai2/boot-tuning.sh"
 
-# Concrete tooling for an abstract mechanism, keyed by service-backend name.
-# This is where the Debian/systemd variants slot in later (e.g. zram-generator).
-ZRAM_PROVIDERS = {
-    "runit": {
-        "packages": ["zramen", "zramen-runit"],
-        "service": "zramen",
-        "conf_path": "/etc/runit/sv/zramen/conf",
-    },
-}
-OOM_PROVIDERS = {
-    "runit": {"packages": ["earlyoom", "earlyoom-runit"], "service": "earlyoom"},
-}
-
 
 def _zramen_conf(algorithm: str, size_percent: int) -> str:
     return (
@@ -41,6 +28,43 @@ def _zramen_conf(algorithm: str, size_percent: int) -> str:
         f"export ZRAM_SIZE={size_percent}\n"
         "export ZRAM_PRIORITY=100\n"
     )
+
+
+def _zram_generator_conf(algorithm: str, size_percent: int) -> str:
+    size = "ram" if size_percent >= 100 else f"ram * {size_percent} / 100"
+    return (
+        "# Managed by AI-2. Manual edits will be overwritten.\n"
+        "[zram0]\n"
+        f"zram-size = {size}\n"
+        f"compression-algorithm = {algorithm}\n"
+        "swap-priority = 100\n"
+    )
+
+
+# Concrete tooling for an abstract mechanism, keyed by service-backend name.
+# runit is Artix (zramen); systemd is the Debian/Ubuntu path (zram-generator).
+ZRAM_PROVIDERS = {
+    "runit": {
+        "packages": ["zramen", "zramen-runit"],
+        "service": "zramen",
+        "conf_path": "/etc/runit/sv/zramen/conf",
+        "conf": _zramen_conf,
+    },
+    "systemd": {
+        "packages": ["systemd-zram-generator"],   # Debian 12+ package name
+        "conf_path": "/etc/systemd/zram-generator.conf",
+        "conf": _zram_generator_conf,
+        # zram-generator is a systemd generator, not a unit to enable: the
+        # config is read at boot, so there is no `service`. daemon-reload picks
+        # it up now and `start /dev/zram0` creates the device immediately.
+        "reload": ["systemctl", "daemon-reload"],
+        "start": ["systemctl", "start", "/dev/zram0"],
+    },
+}
+OOM_PROVIDERS = {
+    "runit": {"packages": ["earlyoom", "earlyoom-runit"], "service": "earlyoom"},
+    "systemd": {"packages": ["earlyoom"], "service": "earlyoom"},
+}
 
 
 MANIFEST_PATH = os.path.join(STATE_DIR, "manifest.json")
@@ -160,23 +184,33 @@ def build_plan(hw: Hardware, tier: Tier, config: dict, backend, pkg_backend) -> 
                     f"install zram tooling: {' '.join(missing)} ({pkg_backend.name})",
                 ))
             actions.append(_write_file_action(
-                provider["conf_path"], _zramen_conf(algorithm, size_percent),
+                provider["conf_path"], provider["conf"](algorithm, size_percent),
                 f"configure zram ({algorithm}, {size_percent}% of RAM) in {provider['conf_path']}",
             ))
-            action = _service_action(
-                backend, provider["service"], True,
-                f"enable zram swap service '{provider['service']}' ({backend.name})")
-            if action:
-                actions.append(action)
+            if provider.get("reload"):
+                actions.append(_cmd_action(
+                    provider["reload"],
+                    f"reload systemd so {provider['conf_path']} is read ({backend.name})"))
+            if provider.get("service"):
+                action = _service_action(
+                    backend, provider["service"], True,
+                    f"enable zram swap service '{provider['service']}' ({backend.name})")
+                if action:
+                    actions.append(action)
+            elif provider.get("start"):
+                actions.append(_cmd_action(
+                    provider["start"],
+                    f"start zram swap now ({backend.name})"))
     elif backend.name in ZRAM_PROVIDERS:
         # Reconcile a previous Tiny/Light configuration when moving to zswap.
         provider = ZRAM_PROVIDERS[backend.name]
-        action = _service_action(
-            backend, provider["service"], False,
-            f"disable zram swap service '{provider['service']}' ({backend.name}); "
-            f"tier uses {mechanism or 'no compressed swap'}")
-        if action:
-            actions.append(action)
+        if provider.get("service"):
+            action = _service_action(
+                backend, provider["service"], False,
+                f"disable zram swap service '{provider['service']}' ({backend.name}); "
+                f"tier uses {mechanism or 'no compressed swap'}")
+            if action:
+                actions.append(action)
 
     # Settings that live in sysfs (zswap parameters, MGLRU) are applied by
     # /usr/lib/ai2/boot-tuning.sh from /etc/ai2/memory.conf, at every boot via

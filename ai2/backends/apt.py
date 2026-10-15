@@ -1,6 +1,6 @@
-"""apt package backend (Debian/Ubuntu). Stub for the institutional path; the
-zram/oom provider tables in tuning.py don't have a Debian mapping yet, so this
-exists to keep the engine backend-agnostic, not to be exercised on Artix."""
+"""apt package backend (Debian/Ubuntu). The Debian path: install/remove/update
+through apt, with the zram/OOM provider tables in tuning.py carrying a systemd
+entry. The engine stays backend-agnostic; Artix keeps using pacman."""
 
 from __future__ import annotations
 
@@ -26,3 +26,16 @@ class AptBackend:
 
     def install_cmd(self, pkgs: list[str]) -> list[str]:
         return ["apt-get", "install", "-y", *pkgs]
+
+    def remove_cmd(self, pkgs: list[str]) -> list[str]:
+        return ["apt-get", "remove", "-y", *pkgs]
+
+    def update_cmd(self, extra: list[str]) -> list[list[str]]:
+        # apt splits refreshing the indexes from upgrading, where pacman's -Syu
+        # does both. full-upgrade matches -Syu's handling of changed
+        # dependencies. `extra` is a package to install (Broadcom kernel
+        # headers), never an argument to `update`, which takes none.
+        cmds = [["apt-get", "update"], ["apt-get", "full-upgrade", "-y"]]
+        if extra:
+            cmds.append(["apt-get", "install", "-y", "--no-install-recommends", *extra])
+        return cmds

@@ -26,3 +26,13 @@ class PacmanBackend:
 
     def install_cmd(self, pkgs: list[str]) -> list[str]:
         return ["pacman", "-S", "--noconfirm", "--needed", *pkgs]
+
+    def remove_cmd(self, pkgs: list[str]) -> list[str]:
+        # -Rns drops the package with its unneeded dependencies and config,
+        # which is what the Broadcom preflight wants for a driver nothing uses.
+        return ["pacman", "-Rns", "--noconfirm", *pkgs]
+
+    def update_cmd(self, extra: list[str]) -> list[list[str]]:
+        # -Syu upgrades and installs `extra` (the Broadcom kernel headers) in
+        # one transaction. A single command, so a list of one.
+        return [["pacman", "-Syu", *extra]]

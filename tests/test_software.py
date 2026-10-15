@@ -4,6 +4,7 @@ command first."""
 import pytest
 
 from ai2 import software
+from ai2.backends.pacman import PacmanBackend
 
 
 class FakeProc:
@@ -59,17 +60,19 @@ def test_resolve_does_not_repeat_a_package():
 def test_install_prints_the_command_before_running_it(monkeypatch, capsys):
     monkeypatch.setattr(software.os, "geteuid", lambda: 0)
     calls = []
-    assert software.install(["office"], "runit", run=_runner(calls)) == 0
-    assert calls == [["pacman", "-S", "--needed", "libreoffice-still"]]
+    assert software.install(["office"], "runit", run=_runner(calls),
+                            pkg_backend=PacmanBackend()) == 0
+    assert calls == [["pacman", "-S", "--noconfirm", "--needed", "libreoffice-still"]]
     out = capsys.readouterr().out
-    assert "pacman -S --needed libreoffice-still" in out
+    assert "pacman -S --noconfirm --needed libreoffice-still" in out
     assert "LibreOffice" in out
 
 
 def test_install_uses_sudo_when_not_root(monkeypatch):
     monkeypatch.setattr(software.os, "geteuid", lambda: 1000)
     calls = []
-    software.install(["htop"], "runit", say=lambda *a: None, run=_runner(calls))
+    software.install(["htop"], "runit", say=lambda *a: None, run=_runner(calls),
+                     pkg_backend=PacmanBackend())
     assert calls[0][0] == "sudo"
 
 
@@ -83,7 +86,7 @@ def test_failed_install_never_touches_services(monkeypatch):
     monkeypatch.setattr(software.os, "geteuid", lambda: 0)
     calls = []
     rc = software.install(["printing"], "runit", say=lambda *a: None,
-                          run=_runner(calls, returncode=1))
+                          run=_runner(calls, returncode=1), pkg_backend=PacmanBackend())
     assert rc == 1
     assert len(calls) == 1, "the service was enabled after a failed install"
 
@@ -104,21 +107,39 @@ def test_install_enables_the_service_it_needs(monkeypatch):
     monkeypatch.setattr("ai2.backends.get_service_backend", lambda init: Backend())
     calls = []
     assert software.install(["printing"], "runit", say=lambda *a: None,
-                            run=_runner(calls)) == 0
+                            run=_runner(calls), pkg_backend=PacmanBackend()) == 0
     assert calls[-1] == ["ln", "-sfn", "/etc/runit/sv/cupsd", "/enabled/cupsd"]
 
 
 def test_update_runs_one_full_upgrade(monkeypatch, capsys):
     monkeypatch.setattr(software.os, "geteuid", lambda: 0)
     calls = []
-    assert software.update(run=_runner(calls), preflight=lambda say, run, sudo: []) == 0
+    assert software.update(run=_runner(calls), preflight=lambda say, run, sudo: [],
+                           pkg_backend=PacmanBackend()) == 0
     assert calls == [["pacman", "-Syu"]]
     assert "pacman -Syu" in capsys.readouterr().out
 
 
+def test_update_on_debian_refreshes_then_upgrades(monkeypatch, capsys):
+    """apt has no single command that both refreshes the indexes and upgrades,
+    and `apt-get update <pkg>` is invalid: the indexes are refreshed first, the
+    upgrade second, and a Broadcom header is a separate install."""
+    from ai2.backends.apt import AptBackend
+    monkeypatch.setattr(software.os, "geteuid", lambda: 0)
+    calls = []
+    assert software.update(run=_runner(calls), preflight=lambda say, run, sudo: ["linux-headers-6.1.0-amd64"],
+                           pkg_backend=AptBackend()) == 0
+    assert calls == [
+        ["apt-get", "update"],
+        ["apt-get", "full-upgrade", "-y"],
+        ["apt-get", "install", "-y", "--no-install-recommends", "linux-headers-6.1.0-amd64"],
+    ]
+
+
 def test_update_reports_a_failure(monkeypatch, capsys):
     monkeypatch.setattr(software.os, "geteuid", lambda: 0)
-    assert software.update(run=_runner([], returncode=1), preflight=lambda say, run, sudo: []) == 1
+    assert software.update(run=_runner([], returncode=1), preflight=lambda say, run, sudo: [],
+                           pkg_backend=PacmanBackend()) == 1
     assert "keyring" in capsys.readouterr().out
 
 

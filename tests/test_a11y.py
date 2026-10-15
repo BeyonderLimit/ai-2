@@ -121,7 +121,7 @@ def test_spd_usable_needs_server_or_config(monkeypatch, tmp_path):
 
 def test_setup_writes_speechd_alsa_config(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setattr(a11y, "_pkg_missing", lambda: [])
+    monkeypatch.setattr(a11y, "_pkg_missing", lambda *a, **kw: [])
     monkeypatch.setattr(a11y, "_xfconf", lambda *a, **kw: True)
     monkeypatch.setattr(a11y, "audio_server_running", lambda: False)
     monkeypatch.setattr(a11y.subprocess, "run",
@@ -155,7 +155,7 @@ def test_notify_silent_without_reader(monkeypatch):
 
 def test_setup_writes_autostart_and_reports(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setattr(a11y, "_pkg_missing", lambda: [])
+    monkeypatch.setattr(a11y, "_pkg_missing", lambda *a, **kw: [])
     monkeypatch.setattr(a11y, "_xfconf", lambda *a, **kw: True)
     assert a11y.setup() == 0
     path = tmp_path / "autostart" / "ai2-orca.desktop"
@@ -166,13 +166,39 @@ def test_setup_writes_autostart_and_reports(tmp_path, monkeypatch, capsys):
 
 def test_setup_stops_when_package_install_fails(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setattr(a11y, "_pkg_missing", lambda: ["orca"])
+    monkeypatch.setattr(a11y, "_pkg_missing", lambda *a, **kw: ["orca"])
 
     class Proc:
         returncode = 1
 
     assert a11y.setup(run=lambda cmd: Proc()) == 1
     assert not (tmp_path / "autostart" / "ai2-orca.desktop").exists()
+
+
+def test_pkg_missing_asks_the_package_backend():
+    class Pkg:
+        def is_installed(self, pkg):
+            return pkg == "orca"     # orca present, the rest missing
+
+    assert a11y._pkg_missing(pkg_backend=Pkg()) == ["speech-dispatcher", "espeak-ng"]
+
+
+def test_setup_installs_with_the_host_package_manager(tmp_path, monkeypatch, capsys):
+    """The reader stack goes in through the package backend, so Debian gets apt
+    rather than a `pacman` that isn't there."""
+    from ai2.backends.apt import AptBackend
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(a11y, "_pkg_missing",
+                        lambda *a, **kw: ["orca", "speech-dispatcher", "espeak-ng"])
+    monkeypatch.setattr(a11y, "_xfconf", lambda *a, **kw: True)
+    calls = []
+
+    class Proc:
+        returncode = 0
+
+    assert a11y.setup(say=lambda *a: None, run=lambda cmd: calls.append(cmd) or Proc(),
+                      pkg_backend=AptBackend()) == 0
+    assert calls == [["sudo", "apt-get", "install", "-y", "orca", "speech-dispatcher", "espeak-ng"]]
 
 
 def test_status_mentions_setup_when_incomplete(monkeypatch, capsys):

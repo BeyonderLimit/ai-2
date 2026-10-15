@@ -24,6 +24,10 @@ class FakeBackend:
         return ["fake-disable", service]
 
 
+class SystemdFakeBackend(FakeBackend):
+    name = "systemd"
+
+
 class FakePkgBackend:
     name = "fakepkg"
 
@@ -86,6 +90,50 @@ def test_no_install_actions_when_tooling_already_installed():
     assert "install zram tooling" not in descriptions
     assert "install OOM guard" not in descriptions
     assert "configure zram" in descriptions and "enable OOM guard service" in descriptions
+
+
+def test_provider_tables_are_keyed_by_service_backend():
+    """The zram/OOM providers are looked up by the service backend's name
+    (`runit`/`systemd`); a package-backend name like `apt` there is dead code
+    and leaves Debian with no provisioning (the bug fixed 2026-10-15)."""
+    from ai2 import tuning
+    assert set(tuning.ZRAM_PROVIDERS) <= {"runit", "systemd"}
+    assert set(tuning.OOM_PROVIDERS) <= {"runit", "systemd"}
+
+
+def test_systemd_zram_uses_zram_generator():
+    """Debian/Ubuntu: zram-generator is a systemd generator, so the plan writes
+    its INI config, reloads systemd and starts /dev/zram0; it never touches the
+    runit zramen service."""
+    tiers = load_tiers()
+    tier = tiers["tiny"]
+    hw = Hardware(ram_nominal_gib=2, logical_cores=2, init_system="systemd", flags={"sse4_1", "sse4_2"})
+    plan = build_plan(hw, tier, resolve_config(tier, tiers), SystemdFakeBackend(), FakePkgBackend())
+    text = render_plan(plan)
+    assert "fake-install systemd-zram-generator" in text
+    assert "/etc/systemd/zram-generator.conf" in text
+    assert "fake-enable zramen" not in text    # no runit service to enable
+    assert "systemctl daemon-reload" in text and "systemctl start /dev/zram0" in text
+    assert "zramen" not in text
+
+
+def test_zram_generator_config_is_ini():
+    from ai2 import tuning
+    conf = tuning._zram_generator_conf("zstd", 100)
+    assert "[zram0]" in conf and "zram-size = ram\n" in conf
+    assert "compression-algorithm = zstd" in conf and "swap-priority = 100" in conf
+    assert tuning._zram_generator_conf("lz4", 50) and "zram-size = ram * 50 / 100" in \
+        tuning._zram_generator_conf("lz4", 50)
+
+
+def test_systemd_provisions_earlyoom():
+    tiers = load_tiers()
+    tier = tiers["tiny"]
+    hw = Hardware(ram_nominal_gib=2, logical_cores=2, init_system="systemd", flags={"sse4_1", "sse4_2"})
+    text = render_plan(build_plan(hw, tier, resolve_config(tier, tiers),
+                                  SystemdFakeBackend(), FakePkgBackend()))
+    assert "fake-install earlyoom" in text
+    assert "enable OOM guard service 'earlyoom'" in text
 
 
 def test_weak_cpu_gets_cheaper_zram_algorithm():

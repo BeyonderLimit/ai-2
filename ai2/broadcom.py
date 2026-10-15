@@ -19,20 +19,41 @@ then cleans up. Bounded, and said out loud in the changelog."""
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+
+from .backends import get_package_backend
+from .backends.pacman import PacmanBackend
 
 WL_PACKAGES = ("broadcom-wl", "broadcom-wl-dkms")
 KERNELS = ("linux", "linux-lts", "linux-zen", "linux-hardened")
 BROADCOM_VENDOR = "14e4"
 
+# Debian/Ubuntu call the wl driver broadcom-sta-dkms; Artix calls it
+# broadcom-wl-dkms. The replacement trap itself is Artix's (WL_PACKAGES above),
+# but the package to remove or install follows the package backend.
+WL_DRIVER = {"pacman": "broadcom-wl-dkms", "apt": "broadcom-sta-dkms"}
+
+
+def _pkg_backend(pkg_backend=None):
+    """The package backend to build commands with. Falls back to pacman (the
+    historical default) only when neither pacman nor apt is present, so the
+    doctor and update never crash on a machine with no package manager."""
+    if pkg_backend is not None:
+        return pkg_backend
+    try:
+        return get_package_backend()
+    except ValueError:
+        return PacmanBackend()
+
 
 @dataclass
 class Plan:
     state: str                       # clean, remove-wl, remove-dkms, needs-headers, ok-broadcom, wl-missing
-    pre_commands: list[list[str]] = field(default_factory=list)   # run BEFORE pacman -Syu (no sudo prefix)
-    extra_packages: list[str] = field(default_factory=list)       # added to the -Syu
+    pre_commands: list[list[str]] = field(default_factory=list)   # run BEFORE the upgrade (no sudo prefix)
+    extra_packages: list[str] = field(default_factory=list)       # added to the upgrade
     message: str = ""                # what and why, for update
     fix: str = ""                    # the doctor's one-line remedy
 
@@ -87,57 +108,64 @@ def detect_devices(run=subprocess.run) -> list[str]:
     return broadcom_wifi_devices(out) if out else broadcom_wifi_devices_sysfs()
 
 
-def installed(names: tuple[str, ...] | list[str], run=subprocess.run) -> dict[str, bool]:
-    if not shutil.which("pacman"):
+def installed(names: tuple[str, ...] | list[str], pkg_backend=None) -> dict[str, bool]:
+    backend = _pkg_backend(pkg_backend)
+    if not backend.available():
         return {n: False for n in names}
-    out = {}
-    for n in names:
-        try:
-            out[n] = run(["pacman", "-Q", n], capture_output=True, text=True, timeout=10).returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            out[n] = False
-    return out
+    return {n: backend.is_installed(n) is True for n in names}
 
 
-def headers_package(run=subprocess.run) -> str:
-    """The headers package for the installed kernel (linux -> linux-headers,
-    linux-lts -> linux-lts-headers); linux-headers when nothing is found."""
-    have = installed(KERNELS, run=run)
+def headers_package(pkg_backend=None) -> str:
+    """The headers package for the installed kernel. Debian/Ubuntu name them
+    per kernel release (linux-headers-<uname -r>); Artix names them per kernel
+    flavor (linux -> linux-headers, linux-lts -> linux-lts-headers)."""
+    backend = _pkg_backend(pkg_backend)
+    if backend.name == "apt":
+        return f"linux-headers-{os.uname().release}"
+    have = installed(KERNELS, pkg_backend=backend)
     kernel = next((k for k in KERNELS if have.get(k)), "linux")
     return f"{kernel}-headers"
 
 
-def assess(devices: list[str], have: dict[str, bool], headers: str) -> Plan:
-    wl, dkms, hdr = have.get("broadcom-wl", False), have.get("broadcom-wl-dkms", False), have.get(headers, False)
+def assess(devices: list[str], have: dict[str, bool], headers: str,
+           pkg_backend=None) -> Plan:
+    backend = _pkg_backend(pkg_backend)
+    driver = WL_DRIVER.get(backend.name, "broadcom-wl-dkms")
+    wl, dkms, hdr = have.get("broadcom-wl", False), have.get(driver, False), have.get(headers, False)
     if not devices:
         if dkms:
-            return Plan("remove-dkms", pre_commands=[["pacman", "-Rns", "--noconfirm", "broadcom-wl-dkms"]],
-                        message="broadcom-wl-dkms and its build tools are installed, but this computer has no "
+            return Plan("remove-dkms", pre_commands=[backend.remove_cmd([driver])],
+                        message=f"{driver} and its build tools are installed, but this computer has no "
                                 "Broadcom WiFi; removing them first (they were pulled in by a package replacement).",
-                        fix="sudo pacman -Rns broadcom-wl-dkms   (no Broadcom WiFi here; ai-2 update does this)")
+                        fix=f"sudo {' '.join(backend.remove_cmd([driver]))}   "
+                            "(no Broadcom WiFi here; ai-2 update does this)")
         if wl:
-            return Plan("remove-wl", pre_commands=[["pacman", "-Rns", "--noconfirm", "broadcom-wl"]],
+            return Plan("remove-wl", pre_commands=[backend.remove_cmd(["broadcom-wl"])],
                         message="broadcom-wl is installed, but this computer has no Broadcom WiFi; removing it "
-                                "first, otherwise the update swaps it for broadcom-wl-dkms and 600 MB of build tools.",
-                        fix="sudo pacman -Rns broadcom-wl   (no Broadcom WiFi here; ai-2 update does this)")
+                                "first, otherwise the update swaps it for a dkms build and 600 MB of build tools.",
+                        fix=f"sudo {' '.join(backend.remove_cmd(['broadcom-wl']))}   "
+                            "(no Broadcom WiFi here; ai-2 update does this)")
         return Plan("clean")
     # Broadcom WiFi present
     if not wl and not dkms:
         return Plan("wl-missing",
                     message=f"Broadcom WiFi found ({devices[0]}) and no wl driver installed.",
-                    fix=f"sudo pacman -S --needed broadcom-wl-dkms {headers}   (if WiFi does not work)")
+                    fix=f"sudo {' '.join(backend.install_cmd([driver, headers]))}   (if WiFi does not work)")
     if not hdr:
         return Plan("needs-headers", extra_packages=[headers],
                     message=f"Broadcom WiFi found ({devices[0]}); adding {headers} to the update so the "
-                            "wl driver (broadcom-wl-dkms) can build for this kernel.",
-                    fix=f"sudo pacman -S --needed {headers}   (the wl driver cannot build without it)")
+                            f"wl driver ({driver}) can build for this kernel.",
+                    fix=f"sudo {' '.join(backend.install_cmd([headers]))}   (the wl driver cannot build without it)")
     return Plan("ok-broadcom", message=f"Broadcom WiFi found ({devices[0]}); wl driver and {headers} present.")
 
 
-def current_plan(run=subprocess.run) -> Plan:
-    headers = headers_package(run=run)
-    have = installed((*WL_PACKAGES, headers), run=run)
-    return assess(detect_devices(run=run), have, headers)
+def current_plan(run=subprocess.run, pkg_backend=None) -> Plan:
+    backend = _pkg_backend(pkg_backend)
+    driver = WL_DRIVER.get(backend.name, "broadcom-wl-dkms")
+    headers = headers_package(pkg_backend=backend)
+    names = tuple(dict.fromkeys((*WL_PACKAGES, driver, headers)))
+    have = installed(names, pkg_backend=backend)
+    return assess(detect_devices(run=run), have, headers, pkg_backend=backend)
 
 
 def preflight(say, run, sudo: list[str], plan: Plan | None = None) -> list[str] | None:
@@ -153,9 +181,9 @@ def preflight(say, run, sudo: list[str], plan: Plan | None = None) -> list[str] 
         try:
             rc = run(full).returncode
         except OSError as exc:
-            say(f"Could not run pacman: {exc}")
+            say(f"Could not run the package manager: {exc}")
             return None
         if rc != 0:
-            say(f"pacman stopped with an error (code {rc}); not continuing with the update.")
+            say(f"The package manager stopped with an error (code {rc}); not continuing with the update.")
             return None
     return list(plan.extra_packages)

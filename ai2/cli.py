@@ -351,7 +351,10 @@ def cmd_runtime_install(args) -> int:
     try:
         subprocess.run(cmd, check=True)
     except (subprocess.CalledProcessError, PermissionError, FileNotFoundError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: could not install {pkg}: {exc}", file=sys.stderr)
+        if pkg_backend.name == "apt":
+            print(f"{pkg} is not in the Debian/Ubuntu repositories; build it yourself or use "
+                  "a different runtime.", file=sys.stderr)
         return 1
     print(f"Installed. Runtime at {runtime.find_runtime(hw.cpu_variant)}")
     return 0

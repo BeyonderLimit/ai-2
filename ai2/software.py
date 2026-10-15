@@ -5,15 +5,18 @@ the first two questions a new user has. There are two answers and they are the
 same underneath. The graphical one is pamac (Artix's package of Manjaro's
 Add/Remove Software), which the desktop menu carries. This module is the
 terminal one, and the one a screen reader can follow: `ai-2 install <thing>`
-and `ai-2 update`, thin wrappers that print the exact pacman command before
+and `ai-2 update`, thin wrappers that print the exact command before
 running it, so nothing here is a black box the user cannot reproduce by hand.
 
-The catalog maps a plain-language name ("printing", "office") to what Artix
-actually calls those packages, including the init-specific service package a
-daemon needs: installing cups is not enough on runit, cupsd has to be enabled
-too, which is exactly the kind of step this project exists to take off the
-user. Anything not in the catalog is passed straight through, so
-`ai-2 install htop` behaves like `pacman -S htop`.
+The catalog maps a plain-language name ("printing", "office") to what the
+system actually calls those packages, including the init-specific service
+package a daemon needs: installing cups is not enough on runit, cupsd has to
+be enabled too, which is exactly the kind of step this project exists to take
+off the user. Anything not in the catalog is passed straight through, so
+`ai-2 install htop` behaves like the system's package manager.
+
+This works on Artix (pacman) and Debian/Ubuntu (apt) — the backend is chosen
+automatically from what is on the system.
 """
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ import os
 import shutil
 import subprocess
 import sys
+
+from .backends import get_package_backend
 
 # Every package name here was checked against the Artix system/world/galaxy
 # repositories (2026-08-30). A daemon needs two more things named per init
@@ -54,8 +59,8 @@ CATALOG = [
     {"id": "printing",
      "what": "Printing: the CUPS service and a printer setup tool",
      "packages": ["cups", "system-config-printer"],
-     "services": {"runit": "cupsd"},          # the directory cups-runit ships
-     "service_packages": {"runit": ["cups-runit"]}},
+     "services": {"runit": "cupsd", "systemd": "cups"},
+     "service_packages": {"runit": ["cups-runit"], "systemd": []}},  # Debian doesn't need a separate cups package
     {"id": "scanner",
      "what": "Simple Scan: use a scanner",
      "packages": ["simple-scan"]},
@@ -125,10 +130,10 @@ def open_gui(updates: bool = False) -> bool:
         return False
 
 
-def resolve(names: list[str], init_system: str = "") -> tuple[list[str], list[str], list[str]]:
+def resolve(names: list[str], init_system: str = "", pkg_backend=None) -> tuple[list[str], list[str], list[str]]:
     """Turn user-typed names into (packages, services to enable, catalog ids
     that matched). Names with no catalog entry stay as they are: they are
-    package names and pacman will say so if they are not."""
+    package names and the backend will say so if they are not."""
     packages: list[str] = []
     services: list[str] = []
     matched: list[str] = []
@@ -145,7 +150,8 @@ def resolve(names: list[str], init_system: str = "") -> tuple[list[str], list[st
             services.append(service)
     if "{kernel-headers}" in packages:
         from . import broadcom
-        packages = [broadcom.headers_package() if p == "{kernel-headers}" else p for p in packages]
+        packages = [broadcom.headers_package(pkg_backend=pkg_backend) if p == "{kernel-headers}" else p
+                    for p in packages]
     seen: set[str] = set()
     packages = [p for p in packages if not (p in seen or seen.add(p))]
     return packages, services, matched
@@ -181,63 +187,82 @@ def render_catalog() -> str:
     return "\n".join(lines)
 
 
-def update(say=print, run=subprocess.run, preflight=None) -> int:
+def update(say=print, run=subprocess.run, preflight=None, pkg_backend=None) -> int:
     """Update AI-2, the AI engine, the model catalog and the whole system.
-    One command, because on a rolling release they are one thing. Before
-    pacman runs, the Broadcom preflight (ai2/broadcom.py) removes a wl driver
-    this machine has no hardware for, or adds the kernel headers a Broadcom
-    machine needs for the dkms build; `preflight` is injectable for tests."""
+    One user command: on a rolling release they are one thing. Before the
+    package backend runs, the Broadcom preflight (ai2/broadcom.py) removes a wl
+    driver this machine has no hardware for, or adds the kernel headers a
+    Broadcom machine needs for the dkms build; `preflight` and `pkg_backend`
+    are injectable for tests."""
     from . import broadcom
     pre = preflight if preflight is not None else broadcom.preflight
     extra = pre(say, run, _sudo())
     if extra is None:
         return 1
-    cmd = _sudo() + ["pacman", "-Syu", *extra]
+    if pkg_backend is None:
+        try:
+            pkg_backend = get_package_backend()
+        except ValueError as exc:
+            say(f"error: {exc}", file=sys.stderr)
+            return 1
     say("Updating AI-2 and the rest of the system. This is the only update there is.")
-    say("Running:  " + " ".join(cmd))
-    if _sudo():
-        say("(sudo asks for your password)")
-    _flush()
-    try:
-        rc = run(cmd).returncode
-    except OSError as exc:
-        say(f"Could not run pacman: {exc}")
-        return 1
+    sudo = _sudo()
+    rc = 0
+    for cmd in pkg_backend.update_cmd(extra):
+        full = sudo + cmd
+        say("Running:  " + " ".join(full))
+        if sudo:
+            say("(sudo asks for your password)")
+        _flush()
+        try:
+            rc = run(full).returncode
+        except OSError as exc:
+            say(f"Could not run the package backend: {exc}")
+            return 1
+        if rc != 0:
+            break
     if rc == 0:
         say("\nThe system is up to date.")
     else:
-        say(f"\npacman stopped with an error (code {rc}). Nothing was left half done: "
-            "pacman applies an update or it does not. If it mentions keys or signatures, "
-            "run  sudo pacman -Sy artix-keyring ai2-keyring  and try again.")
+        say(f"\nThe package backend stopped with an error (code {rc}). Nothing was left half done: "
+            "the backend applies an update or it does not. If it mentions keys or signatures, "
+            "run the backend's equivalent of 'sudo pacman -Sy artix-keyring ai2-keyring' and try again.")
     return rc
 
 
 def install(names: list[str], init_system: str = "", say=print,
-            run=subprocess.run) -> int:
+            run=subprocess.run, pkg_backend=None) -> int:
     """Install software by short name or by package name, and enable the
     service it needs (printing is useless with cupsd disabled)."""
     if not names:
         say(render_catalog())
         return 0
-    packages, services, matched = resolve(names, init_system)
+    if pkg_backend is None:
+        try:
+            pkg_backend = get_package_backend()
+        except ValueError as exc:
+            say(f"error: {exc}", file=sys.stderr)
+            return 1
+    packages, services, matched = resolve(names, init_system, pkg_backend=pkg_backend)
     unknown = [n for n in names if n not in matched]
     for name in matched:
         item = entry(name)
         say(f"{name}: {item['what']}")
     if unknown:
-        say("Passing straight to pacman: " + " ".join(unknown))
-    cmd = _sudo() + ["pacman", "-S", "--needed", *packages]
+        say("Passing straight to the package backend: " + " ".join(unknown))
+    sudo = _sudo()
+    cmd = sudo + pkg_backend.install_cmd(packages)
     say("Running:  " + " ".join(cmd))
-    if _sudo():
+    if sudo:
         say("(sudo asks for your password)")
     _flush()
     try:
         rc = run(cmd).returncode
     except OSError as exc:
-        say(f"Could not run pacman: {exc}")
+        say(f"Could not run the package backend: {exc}")
         return 1
     if rc != 0:
-        say(f"\npacman stopped with an error (code {rc}); nothing was installed.")
+        say(f"\nThe package backend stopped with an error (code {rc}); nothing was installed.")
         return rc
     for service in services:
         _enable(service, init_system, say, run)
