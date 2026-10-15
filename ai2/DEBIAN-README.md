@@ -5,8 +5,8 @@ AI-2 turns Debian/Ubuntu into a local AI machine. This guide covers installation
 ## Quick Start
 
 There is no `ai2` package in Debian or Ubuntu — `sudo apt install ai2` fails with
-`E: Unable to locate package ai2`. AI-2 is run from its source tree (see
-Installation); after installing it:
+`E: Unable to locate package ai2`. Install AI-2 into a virtual environment
+(see Installation), then:
 
 ```bash
 sudo ai-2 wizard
@@ -28,15 +28,25 @@ llama.cpp build yourself (see Installation).
 ## Installation
 
 AI-2 is **not** in the Debian or Ubuntu repositories and this project ships no
-`.deb`. Install from the source tree; Python 3.11+ and PyYAML are the only
-requirements:
+`.deb`. Stock Debian also has no `pip` for the system Python (`python3 -m pip`
+prints `No module named pip`), and Debian 12 marks that Python as externally
+managed (PEP 668), so even with `python3-pip` installed an install into it is
+refused. Install into a virtual environment instead; Python 3.11+ is required:
 
 ```bash
 git clone https://github.com/ProWoos-Devs/ai-2.git
 cd ai-2
-python3 -m pip install -e .      # provides the ai-2 and AI-2 commands
-sudo ai-2 wizard
+sudo apt install python3-venv                 # the venv module and its pip
+python3 -m venv ~/.local/venvs/ai2
+~/.local/venvs/ai2/bin/pip install -e .       # fetches PyYAML + setuptools (network)
+
+# the wizard tunes the system, so root must find the command too:
+sudo ln -sf ~/.local/venvs/ai2/bin/ai-2 /usr/local/bin/ai-2
+sudo ln -sf ~/.local/venvs/ai2/bin/AI-2 /usr/local/bin/AI-2
 ```
+
+Then run `sudo ai-2 wizard`. The editable install leaves an `ai2.egg-info/`
+directory in the checkout; git ignores it.
 
 System tuning goes through apt and systemd (zram-generator, earlyoom), which
 this path supports. The **inference engine is not packaged for Debian**: the
