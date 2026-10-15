@@ -31,11 +31,13 @@ AI-2 is **not** in the Debian or Ubuntu repositories and this project ships no
 `.deb`. Stock Debian also has no `pip` for the system Python (`python3 -m pip`
 prints `No module named pip`), and Debian 12 marks that Python as externally
 managed (PEP 668), so even with `python3-pip` installed an install into it is
-refused. Install into a virtual environment instead; Python 3.11+ is required:
+refused. Install into a virtual environment instead; Python 3.11+ is required.
+Run these from the repository root — the directory holding `pyproject.toml`,
+not the inner `ai2/` package directory:
 
 ```bash
 git clone https://github.com/ProWoos-Devs/ai-2.git
-cd ai-2
+cd ai-2                                       # the repo root (has pyproject.toml)
 sudo apt install python3-venv                 # the venv module and its pip
 python3 -m venv ~/.local/venvs/ai2
 ~/.local/venvs/ai2/bin/pip install -e .       # fetches PyYAML + setuptools (network)
