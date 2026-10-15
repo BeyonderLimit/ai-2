@@ -72,14 +72,20 @@ the AI Score) and `llama-server` (for chat and for embedding documents) — in
 `/opt/ai2/llama`, the directory AI-2 searches first:
 
 ```bash
+
+sudo mkdir -pv /opt/ai2/llama
+
 sudo apt install build-essential cmake
 git clone https://github.com/ggml-org/llama.cpp
 cd llama.cpp
 cmake -B build                                   # CPU build; no CUDA needed
 cmake --build build --config Release -j"$(nproc)"
+ln -s build/bin/llama-server
+ln -s build/bin/llama-bench
 
-sudo mkdir -p /opt/ai2/llama
-sudo cp build/bin/llama-bench build/bin/llama-server /opt/ai2/llama/
+sudo cp llama-* /opt/ai2/llama/
+
+sudo ai-2 wizard
 ```
 
 Then `sudo ai-2 doctor` should report `ok  AI engine  <variant> build at
