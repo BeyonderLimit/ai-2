@@ -8,160 +8,258 @@ AI-2 turns an ordinary or old PC into a local AI machine that fits what that har
 the machine, tunes it, measures what it can really manage, and recommends models that fit, locally where possible
 and remotely only by explicit choice. Reference platform is Artix Linux with runit.
 
-## Install
+# AI-2 on Debian/Ubuntu
 
-### Option 1: the AI-2 ISO (recommended)
+This is a port of the Post-Install AI-2 for Debian/Ubuntu original Repo [AI-2] (https://github.com/ProWoos-Devs/ai-2)
 
-A complete system: Artix Linux (runit), XFCE, the AI engine and the `ai-2` tool, with a graphical installer. Lean by design, about 1.9 GB, with three Knowledge Packs and the model that searches them already on board.
+AI-2 turns Debian/Ubuntu into a local AI machine. This guide covers installation, configuration, and usage.
 
-1. Download the latest ISO: [ai-2-x86_64.iso](https://github.com/ProWoos-Devs/ai-2/releases/latest/download/ai-2-x86_64.iso) and its [SHA-256](https://github.com/ProWoos-Devs/ai-2/releases/latest/download/ai-2-x86_64.iso.sha256). Every release is also kept under its build date on the [Releases page](https://github.com/ProWoos-Devs/ai-2/releases), and mirrored on [SourceForge](https://sourceforge.net/projects/ai-2/).
-2. Verify it: `sha256sum -c ai-2-x86_64.iso.sha256`
-   The checksum itself is signed with the same key that signs every AI-2 package. To check that too, download [ai-2-x86_64.iso.sha256.sig](https://github.com/ProWoos-Devs/ai-2/releases/latest/download/ai-2-x86_64.iso.sha256.sig), then:
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/ProWoos-Devs/ai2-packages/main/ai2-package-signing.asc | gpg --import
-   gpg --verify ai-2-x86_64.iso.sha256.sig ai-2-x86_64.iso.sha256
-   ```
-   It should say a good signature from the AI-2 signing key, `F1889E37B4E5FEC8`. The key, how pacman checks every package, and how to stay on an older version are on one page, [Verifying and Pinning](https://github.com/ProWoos-Devs/ai-2/wiki/Verifying-and-Pinning).
-3. Write it to a USB stick of 4 GB or more, or burn it to a DVD. Linux or macOS (replace `sdX`, everything on the stick is erased): `sudo dd if=ai-2-x86_64.iso of=/dev/sdX bs=4M conv=fsync status=progress`. Windows: Rufus or balenaEtcher in their default mode.
-4. Boot the computer from the stick. It starts a live desktop (logs in by itself, user `ai-2`, password `ai-2`) that you can try without touching your disks. `START-HERE.txt` on that desktop explains the installation; "Install AI-2" starts the installer.
+## Quick Start
 
-After the installation, the setup wizard opens at the first login and does everything below for you. Requirements: a 64-bit PC, 2 GB of RAM (4 GB recommended), about 6 GB of disk, Secure Boot off (the image is not signed for it). Internet is not needed to install, only later for models and updates.
+There is no `ai2` package in Debian or Ubuntu — `sudo apt install ai2` fails with
+`E: Unable to locate package ai2`. Setup has three parts:
 
-### Option 2: packages on an existing Artix or Arch-based system
+1. **Install AI-2** into a virtual environment (see [Installation](#installation)).
+2. **Provide the AI engine** — Debian ships no `ai2-llama-cpp` package, so build
+   llama.cpp and put it in `/opt/ai2/llama` (see [Installation](#installation)).
+3. **Run** `sudo ai-2 wizard` — it tunes the system and offers a model.
 
-Add the signed AI-2 repository:
+Knowledge Pack and document search use the same engine to embed text, so they
+work only after step 2.
 
-```
-curl -fsSL https://raw.githubusercontent.com/ProWoos-Devs/ai2-packages/main/ai2-package-signing.asc | sudo pacman-key --add -
-sudo pacman-key --lsign-key F1889E37B4E5FEC8
-```
+## What AI-2 Does for You
 
-Append to `/etc/pacman.conf`:
+- **Hardware detection**: Identifies CPU features (AVX2, SSE4.1, etc.) and picks the matching llama.cpp runtime
+- **Tier assignment**: Recommends a configuration tier based on your RAM and cores
+- **System tuning**: Installs zram/zswap for memory efficiency, earlyoom to prevent OOM kills, and disables unnecessary services
+- **Model management**: Downloads and serves local LLMs (Qwen, Gemma, Smollm3, etc.)
+- **Knowledge packs**: Indexes documents for AI-powered search and answers
+- **Accessibility**: Screen reader and speech support for users with disabilities
 
-```
-[ai2]
-SigLevel = Required DatabaseOptional
-Server = https://github.com/ProWoos-Devs/ai2-packages/releases/download/x86_64
-```
+## Installation
 
-Then:
+### 1. Install AI-2
 
-```
-sudo pacman -Syu ai2-keyring ai-2
-sudo pacman -S ai2-llama-cpp             # the engine; it picks the build for this CPU at start
-sudo ai-2 init --apply                   # or just: ai-2 wizard
-```
+AI-2 is **not** in the Debian or Ubuntu repositories and this project ships no
+`.deb`. Stock Debian also has no `pip` for the system Python (`python3 -m pip`
+prints `No module named pip`), and Debian 12 marks that Python as externally
+managed (PEP 668), so even with `python3-pip` installed an install into it is
+refused. Install into a virtual environment instead; Python 3.11+ is required.
+Run these from the repository root — the directory holding `pyproject.toml`,
+not the inner `ai2/` package directory:
 
-## Knowledge Packs
+```bash
+sudo apt install git python3-venv              # git to clone, venv for the isolated pip
+git clone https://github.com/ProWoos-Devs/ai-2.git
+cd ai-2                                        # the repo root (has pyproject.toml)
+python3 -m venv ~/.local/venvs/ai2
+~/.local/venvs/ai2/bin/pip install -e .        # fetches PyYAML + setuptools (network)
 
-A Knowledge Pack is a set of documents this computer searches and answers from in seconds, with no internet,
-naming the document every answer came from. No model writes those answers, so an old laptop gives the same ones
-as a new machine. Three come with the ISO, and **Applications > AI-2 > Search Knowledge** answers from them right
-after the install.
-
-- **Get more**: `ai-2 knowledge browse` (or **Applications > AI-2 > Knowledge Packs**) lists what there is, with
-  what is in each and who made it, and installs the ones you pick by number.
-- **Make one**: `ai-2 knowledge export` builds a pack from your own PDFs and notes. To share it, host the file and
-  open a pull request adding your entry to the catalog; the steps are in
-  [CONTRIBUTING.md](https://github.com/ProWoos-Devs/ai2-knowledge/blob/main/CONTRIBUTING.md), and the checks on your
-  pull request download the file, install it and compare it with what your entry claims.
-- **Everything lives here**: the community catalog, https://github.com/ProWoos-Devs/ai2-knowledge, where the
-  project's own packs sit with everyone else's. Ideas and problems about packs belong in that repository's
-  [Issues](https://github.com/ProWoos-Devs/ai2-knowledge/issues); anything about AI-2 itself belongs in
-  [this one's](https://github.com/ProWoos-Devs/ai-2/issues).
-
-More in the wiki, [Knowledge Packs](https://github.com/ProWoos-Devs/ai-2/wiki/Knowledge-Packs).
-
-## Translations
-
-So far, in the installer AI-2 speaks the following languages:
-
-<!-- installer-languages:start -->
-- English
-- Spanish
-- German
-- Polish
-<!-- installer-languages:end -->
-
-Anyone can add a language, with no programs to install and nothing to compile; [TRANSLATING.md](TRANSLATING.md) walks
-the whole way, and the checks on your pull request say what is still missing.
-
-<!-- translators:start -->
-| Language | Code | Translated by |
-|---|---|---|
-| English | `en` | [ProWoos team](https://github.com/ProWoos-Devs) |
-| Español | `es` | [Rafael Minuesa](https://github.com/rafael-minuesa) |
-| Deutsch | `de` | [ProWoos team](https://github.com/ProWoos-Devs) |
-| Polski | `pl` | [Mateusz Szczepaniak](https://github.com/szczepaniakmateusz59-del) |
-<!-- translators:end -->
-
-## What your machine can do
-
-`ai-2 benchmark` runs llama.cpp on a fixed workload and scores the machine from 0 to 100. That score, not the
-amount of RAM, decides which model is recommended: RAM alone over-promises. The oldest validated target is a 2011 laptop (AMD A4-3305M, no SSE4.1, 4 GB RAM, spinning disk) that runs a 0.5B model at about 2 tokens per second from a package built for exactly that CPU class.
-
-The packaged llama.cpp runtime is CPU-only, and `ai-2 detect` says so next to any GPU it lists. This position was reviewed with sources on 2026-09-14. CUDA and ROCm are not coming for the hardware AI-2 is built for. The CUDA toolkit package alone is bigger than the whole AI-2 ISO and CUDA 13 dropped the GeForce GTX 10 series and older, while ROCm is over 9 GB installed and supports no GCN card. Proprietary NVIDIA drivers are out-of-tree kernel modules, the same class of problem as the Broadcom WiFi driver, so they will never ship on the image. The one GPU path under consideration is a Vulkan build of llama.cpp on Mesa's open drivers. It is not built, and it would pay off only on a machine with a discrete card of the Radeon RX 400 or GeForce GTX 10 generation or later, never on the shared-memory integrated GPUs of the laptops AI-2 was validated on, which cannot run it at all.
-
-## Commands
-
-```
-ai-2 wizard          # the guided setup, re-runnable any time
-ai-2 doc search      # ask the Knowledge Packs and your own documents (the Search Knowledge menu entry)
-ai-2 knowledge browse # see the Knowledge Packs there are, install or update by number
-ai-2 chat            # start the local AI if needed and open the chat page (--terminal on a slow machine)
-ai-2 update          # update AI-2, the engine, the model catalog and the system in one step
-ai-2 doctor          # check engine, model, tuning, services, repository key
+# the wizard tunes the system, so root must find the command too:
+sudo ln -sf ~/.local/venvs/ai2/bin/ai-2 /usr/local/bin/ai-2
+sudo ln -sf ~/.local/venvs/ai2/bin/AI-2 /usr/local/bin/AI-2
 ```
 
-Everything else, 27 commands in all, from `ai-2 detect` to `ai-2 transcribe`, is in the wiki,
-[Commands](https://github.com/ProWoos-Devs/ai-2/wiki/Commands). `AI-2` works as a synonym for `ai-2` everywhere.
+The editable install leaves an `ai2.egg-info/` directory in the checkout; git
+ignores it.
 
-### Using the local AI from other apps
+### 2. Provide the AI engine
 
-`ai-2 serve --host 0.0.0.0 --api-key KEY` is a standard OpenAI-compatible endpoint. Any app with a custom base URL field takes `http://HOST:8080/v1` plus that key. Documented by their upstreams (not yet driven end to end from an AI-2 box), Open WebUI, Paperless-GPT, Open Notebook and Blinko. Home Assistant only through the community integrations Home LLM or Extended OpenAI Conversation, since its built-in OpenAI, Ollama and Anthropic integrations do not accept a third-party endpoint. Those apps run on another machine, the AI-2 box is only the server. An embedding endpoint exists too, `ai-2 serve --model nomic-embed-text-v2-moe --host 0.0.0.0 --api-key KEY` serves `/v1/embeddings` on port 8081 (it is what `ai-2 doc` uses locally).
+The **inference engine is not packaged for Debian**: `ai2-llama-cpp` is an
+Artix package and does not exist here, so `sudo ai-2 runtime install` will say
+so. Build llama.cpp and place the two binaries AI-2 runs — `llama-bench` (for
+the AI Score) and `llama-server` (for chat and for embedding documents) — in
+`/opt/ai2/llama`, the directory AI-2 searches first:
 
-Two things to know. `ai-2 serve` is a foreground command with no boot-time service yet, so a box that serves other apps needs it kept running (tmux, screen, or a runit service of your own), and `ai-2 chat` only ever starts a server on localhost. It serves the score-recommended model with the tier's context size (4096 on Standard, 8192 on Creator). `--model` and `--ctx` override that with a RAM check only, no speed check, and `/v1/models` reports the model file path as the id.
+```bash
+sudo apt install build-essential cmake
+git clone https://github.com/ggml-org/llama.cpp
+cd llama.cpp
+cmake -B build                                   # CPU build; no CUDA needed
+cmake --build build --config Release -j"$(nproc)"
 
-Which machine can be the server is a question for the AI Score, not the tier. On the 2011 reference laptop the 0.5B model generates at about 2 tokens per second and reads prompts no faster, so a 1000-token tagging prompt takes minutes before the first output token. Machines like that are the clients. A stronger machine on the network runs `ai-2 serve` and they run `ai-2 chat --remote`. Background jobs such as document tagging tolerate a slow server, a voice assistant does not.
+sudo mkdir -p /opt/ai2/llama
+sudo cp build/bin/llama-bench build/bin/llama-server /opt/ai2/llama/
+```
 
-## Packages
+Then `sudo ai-2 doctor` should report `ok  AI engine  <variant> build at
+/opt/ai2/llama`. AI-2 also looks in `/usr/lib/ai2/runtimes/llama.cpp`,
+`/usr/lib/ai2/runtimes/llama.cpp-<variant>`, and `~/llama`. Instead of copying
+the binaries, you can point `AI2_RUNTIME_DIR` at your build's `build/bin`; that
+variable must reach the root process too, so use
+`sudo AI2_RUNTIME_DIR=/path/to/build/bin ai-2 ...`, or just use
+`/opt/ai2/llama`, which needs no variable.
 
-- `ai-2`, this tool.
-- `ai2-keyring`, the package signing key for pacman.
-- `ai2-help`, `ai2-everyday`, `ai2-linux-essentials`, the three Knowledge Packs that come with AI-2. Each installs
-  the file the catalog publishes, into `/usr/share/ai2/doc/`, so `pacman -Syu` refreshes them and `pacman -R`
-  removes one.
-- `ai2-llama-cpp`, the engine, one package for every CPU class: llama.cpp from one pinned release, built for plain x86-64, plus one CPU backend module per instruction-set level (x64, sse42, sandybridge, ivybridge, piledriver, haswell, ...); ggml scores the modules against the CPU at start and loads the best, x64 always qualifying. Before it ships, every file that must run on a pure-SSE2 machine is disassembled against that instruction set, and the constructors every module runs at load are checked the same way, because a single stray SSE4.1 instruction crashes an old machine. `ai-2 benchmark` records which module ran.
-- `ai2-whisper-cpp`, the speech-to-text engine for `ai-2 transcribe`, from one pinned whisper.cpp release with its own ggml, no ffmpeg linked in. One package for every CPU: like ggml in llama.cpp, it picks the CPU build at start, and the same gate checks every binary and every CPU module before it ships.
+Once a `llama-bench` answers for your CPU, `sudo ai-2 init --apply` skips the
+engine-package step instead of failing on a package Debian does not have.
 
-## Status
+## First-Time Setup
 
-AI-2 0.19.0. Tested on two older AMD laptops and through complete QEMU installs. The ISO boots and installs in
-BIOS/MBR and UEFI/GPT modes, a setup wizard runs at the first login, and three Knowledge Packs answer offline from
-the moment it is installed. Hardware detection, tier tuning, AI Score benchmarking, model recommendations, health
-reports, speech to text and the workflow profiles are implemented; `ai-2 workflow install` downloads a profile's
-models and prints its packages as a pacman line rather than installing them. Validation details live in the
-[Wiki](https://github.com/ProWoos-Devs/ai-2/wiki/Validated-Hardware); bugs and ideas belong in
-[Issues](https://github.com/ProWoos-Devs/ai-2/issues).
+Run the wizard:
 
-## For people who clone the repo
+```bash
+sudo ai-2 wizard
+```
 
-**Architecture.** Three parts. The Adaptation Engine detects hardware, assigns one of six capability tiers (Tiny,
-Light, Standard, Creator, Studio, Workstation) and applies the matching configuration. The Workflow Engine
-describes what the user wants to do, as declarative YAML profiles. The Runtime Engine executes models; the local
-runtime is llama.cpp, chosen per CPU class, and heavyweight daemons are avoided on low-memory tiers. Workflows
-request capabilities, tiers grant a subset, runtimes execute what was granted.
+The wizard will:
+1. Detect your hardware (CPU, RAM, GPU)
+2. Assign a tier (Tiny, Light, Standard, Creator, Studio, or Workstation)
+3. Look for the llama.cpp runtime for your CPU variant. With step 2 of
+   Installation done it finds `/opt/ai2/llama`; without it, it says what is
+   missing and how to provide it, and the tuning still applies
+4. Tune your system (zram/swap, earlyoom, disable idle-suspend, sysctl)
+5. Offer to download a chat model
 
-Everything is declarative. Tier definitions live in `ai2/data/tiers/*.yml`, the model catalog in
-`ai2/data/models.yml`, workflow profiles in `ai2/data/profiles/*.yml`. The engine is deliberately small
-(Python 3.11+, PyYAML only).
+You can run the wizard at any time to reconfigure or update. The same tuning
+runs non-interactively as:
 
-**Layout.**
+```bash
+sudo ai-2 init --apply
+```
 
-- `ai2/` the tool. `tests/` (`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/`).
-- `packaging/` PKGBUILDs, the ISA gate (`isa-check.sh`), build and sign/publish scripts.
-- `iso/` the artools profile for the AI-2 ISO and the QEMU test helper.
-- `branding/` MOTD and greeter configuration.
+With the engine in place this finishes with no failing step; if you have not
+built llama.cpp yet, the tuning still applies and the engine step reports what
+is missing.
+
+## Using AI-2
+
+### Chat with the AI
+
+```bash
+ai-2 chat
+```
+
+This starts the local AI server and opens a browser window. Use `ai-2 chat --terminal` for headless or accessibility use.
+
+### Ask the AI a Question
+
+```bash
+ai-2 chat --terminal
+```
+
+Type the question and press Enter; `ai-2 chat` (without `--terminal`) opens the
+same AI as a browser page. To ask about your own documents instead, index them
+and use `ai-2 doc ask "..."` (see below).
+
+### Search Your Documents
+
+Knowledge Packs ship ready to search; install one, then search it (no AI model
+is used — the passages are shown with their source):
+
+```bash
+ai-2 knowledge install ai2-help
+ai-2 doc search "Linux security best practices"
+```
+
+Index your own files and have the AI answer from them with `ai-2 doc index FILE`
+and `ai-2 doc ask "..."`. Both need the engine from Installation: the query is
+embedded with it.
+
+### Benchmark Your System
+
+The AI Score is measured on one fixed model (Qwen2.5 0.5B Instruct, ~380 MB) so
+scores compare across machines. Pull it once, then benchmark:
+
+```bash
+ai-2 model pull qwen2.5-0.5b
+ai-2 benchmark
+```
+
+This prints your AI Score (0–100) from token generation speed, plus a
+recommended local model. Use it to compare machines or track improvements.
+
+### Manage Models
+
+```bash
+ai-2 model list          # Show installed models
+ai-2 model pull <id>     # Download a model
+ai-2 model rm <id>       # Remove a model
+ai-2 model verify        # Check model integrity
+```
+
+### Remote Inference
+
+If your machine is too slow for larger models, use remote inference:
+
+```bash
+ai-2 remote set https://llama-server.example.com
+ai-2 chat --remote
+```
+
+Use the scheme the server actually serves: a `llama-server` on this machine
+speaks plain `http://127.0.0.1:8080`, not `https://`. Asking for
+`https://127.0.0.1:8080` fails with an SSL handshake timeout.
+
+## Configuration
+
+### Check Your Tier
+
+```bash
+ai-2 tier
+```
+
+### View System Profile
+
+```bash
+ai-2 profile
+```
+
+### Init System
+
+AI-2 is configured for **systemd** (the default on Debian/Ubuntu). If you're using a different init system, file a bug.
+
+### Reverting Changes
+
+```bash
+sudo ai-2 init --revert
+```
+
+This undoes all AI-2 tuning (zram, earlyoom, service changes) but leaves packages installed.
+
+## Troubleshooting
+
+### Runtime Not Installed
+
+`sudo ai-2 runtime install` cannot fetch `ai2-llama-cpp` here: Debian and Ubuntu
+have no such package. Build llama.cpp and point AI-2 at it (this is step 2 of
+Installation):
+
+- copy `llama-bench`/`llama-server` into `/opt/ai2/llama`, or
+- set `AI2_RUNTIME_DIR` to the directory that holds them, or
+- point at a server on another machine with `ai-2 remote set <url>` (no local runtime needed)
+
+Once a `llama-bench` answers for your CPU, `sudo ai-2 init --apply` skips the
+package step instead of failing on it. Note the directory must contain
+`llama-bench`: that is how AI-2 recognizes an engine.
+
+### OOM Kills
+
+If your system is swapping heavily, run `ai-2 init --revert` to disable zram, or manually increase swap space.
+
+### GPU Not Detected
+
+AI-2 runs on the CPU by default. GPUs are detected but not used for inference. To enable GPU acceleration, you'll need to build a CUDA-enabled llama.cpp runtime.
+
+### Accessibility Issues
+
+For screen reader or speech support, run:
+
+```bash
+sudo ai-2 accessibility setup
+```
+
+## Reporting Issues
+
+Before filing a bug, run:
+
+```bash
+sudo ai-2 doctor
+sudo ai-2 report
+```
+
+Attach the generated report to your issue.
+
+
 
 ## License
 
