@@ -50,7 +50,7 @@ not the inner `ai2/` package directory:
 
 ```bash
 sudo apt install git python3-venv              # git to clone, venv for the isolated pip
-git clone https://github.com/ProWoos-Devs/ai-2.git
+git clone https://github.com/BeyonderLimit/ai-2.git
 cd ai-2                                        # the repo root (has pyproject.toml)
 python3 -m venv ~/.local/venvs/ai2
 ~/.local/venvs/ai2/bin/pip install -e .        # fetches PyYAML + setuptools (network)
